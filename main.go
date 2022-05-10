@@ -1,10 +1,10 @@
 package main
 
-import "DockerComposeManager/cmd"
+import (
+	"DockerComposeManager/cmd"
+	"github.com/spf13/cobra"
+)
 
 func main() {
-	err := cmd.Execute()
-	if err != nil {
-		return
-	}
+	cobra.CheckErr(cmd.RootCommand().Execute())
 }

@@ -2,40 +2,47 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/jwalton/gchalk"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
-var rootCmd = &cobra.Command{
-	Use:   "DockerComposeManager",
-	Short: "Manage your Docker Compose Files with ease",
-	Long:  "Manage your Docker Compose Files with ease, with features like environment variable substitution, groups, orders, autostart utilities, and more.",
-	Run:   func(cmd *cobra.Command, args []string) {},
+func RootCommand() *cobra.Command {
+	rootCmd := &cobra.Command{
+		Use:   "DockerComposeManager",
+		Short: "Manage your Docker Compose Files with ease",
+		Long:  "Manage your Docker Compose Files with ease, with features like environment variable substitution, groups, orders, autostart utilities, and more.",
+		Run: func(cmd *cobra.Command, args []string) {
+			// root command - only runs if no subcommand is specified
+			fmt.Println("Welcome to Docker Compose Manager!\nAdd the '-h' flag to see all available commands.")
+		},
+	}
+
+	// add global flags
+	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file (default is ./"+defaultConfigName+")")
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
+	rootCmd.PersistentFlags().StringVarP(&dockerAddr, "docker-addr", "d", "unix:///var/run/docker.sock", "docker address (default is unix:///var/run/docker.sock)")
+
+	rootCmd.AddCommand(
+		configsCmd,
+		initCmd,
+	)
+
+	return rootCmd
 }
+
 var cfgFile string
 var verbose bool
-var projectName string
-
-func Execute() error {
-	err := rootCmd.Execute()
-	if err != nil {
-		return err
-	}
-	cobra.CheckErr(saveConfig(viper.GetViper()))
-	return nil
-}
+var dockerAddr string
 
 const defaultConfigName = ".dcm.yml"
 
 func init() {
 	// load config file
 	cobra.OnInitialize(initConfig)
-
-	// add global flags
-	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file (default is ./.dcm.yml)")
-	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 }
 
 func initConfig() {
@@ -61,25 +68,63 @@ func initConfig() {
 		viper.SetConfigType("yml")
 	}
 	// load settings from env too
+	viper.SetEnvPrefix("DCM")
+	viper.EnvKeyReplacer(strings.NewReplacer("-", "_"))
 	viper.AutomaticEnv()
 }
 
 func loadConfig() {
 	if err := viper.ReadInConfig(); err != nil {
 		if os.IsNotExist(err) {
-			fmt.Println("No project file found. Please run the 'init' command to create one.")
+			Warn("No project file found.")
 		} else {
 			fmt.Println("Error occurred while reading config:", err) // failed to read configuration file whilst it exists
+			os.Exit(-1)
 		}
-		os.Exit(-1)
 	}
 
-	if verbose {
-		fmt.Println("Using config file:", viper.ConfigFileUsed())
-	}
+	Debug("Using config file", viper.ConfigFileUsed())
 }
 
 func saveConfig(v *viper.Viper) error {
+	// make parents dirs
 	cobra.CheckErr(os.MkdirAll(filepath.Dir(v.ConfigFileUsed()), os.ModePerm))
 	return v.WriteConfig()
+}
+
+func CheckErr(err error, prefix ...string) {
+	if err != nil {
+		// prevent space before ":"
+		Error(strings.Join(prefix, " ")+":", err)
+		os.Exit(-1)
+	}
+}
+
+func Debug(msg ...any) {
+	if verbose {
+		fmt.Println(gchalk.Yellow("[DEBUG] " + arrToStr(msg)))
+	}
+}
+
+func Warn(msg ...any) {
+	// space to make the messages in a column
+	fmt.Println(gchalk.RGB(255, 136, 0)("[WARN ] " + arrToStr(msg)))
+}
+
+func Error(msg ...any) {
+	fmt.Println(gchalk.Red("[ERROR] " + arrToStr(msg)))
+}
+
+// arrToStr converts an array of any to a string, joined by a space
+// if the array is empty, it returns an empty string
+func arrToStr(msg []any) string {
+	var result = ""
+	for i, v := range msg {
+		var parsed = fmt.Sprintf("%+v", v)
+		if i < len(msg)-1 {
+			parsed += " "
+		}
+		result += parsed
+	}
+	return result
 }

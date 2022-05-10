@@ -36,11 +36,6 @@ var initCmd = &cobra.Command{
 }
 
 func initProject(name string) {
-	projectName = name
-	viper.Set("projectname", projectName)
+	viper.Set("name", name)
 	cobra.CheckErr(saveConfig(viper.GetViper()))
-}
-
-func init() {
-	rootCmd.AddCommand(initCmd)
 }
