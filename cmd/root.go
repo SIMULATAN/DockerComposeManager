@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/docker/cli/cli/command"
 	"github.com/jwalton/gchalk"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -10,7 +11,10 @@ import (
 	"strings"
 )
 
-func RootCommand() *cobra.Command {
+var dockerCli command.Cli
+
+func RootCommand(cli command.Cli) *cobra.Command {
+	dockerCli = cli
 	rootCmd := &cobra.Command{
 		Use:   "DockerComposeManager",
 		Short: "Manage your Docker Compose Files with ease",

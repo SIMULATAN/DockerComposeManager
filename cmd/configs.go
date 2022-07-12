@@ -1,13 +1,19 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
-	"github.com/compose-spec/compose-go/cli"
-	"github.com/docker/docker/client"
+	cl "github.com/compose-spec/compose-go/cli"
+	"github.com/compose-spec/compose-go/types"
+	"github.com/docker/compose/v2/cmd/formatter"
+	"github.com/docker/compose/v2/pkg/api"
+	"github.com/docker/compose/v2/pkg/compose"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 var argsValidator = func(cmd *cobra.Command, args []string) error {
@@ -25,6 +31,65 @@ var argsValidator = func(cmd *cobra.Command, args []string) error {
 type Metadata struct {
 	File string `yaml:"file"`
 	Name string `yaml:"name"`
+}
+
+type composeOptions struct {
+	*cl.ProjectOptions
+}
+
+type upOptions struct {
+	*composeOptions
+	Detach             bool
+	noStart            bool
+	noDeps             bool
+	cascadeStop        bool
+	exitCodeFrom       string
+	scale              []string
+	noColor            bool
+	noPrefix           bool
+	attachDependencies bool
+	attach             []string
+	wait               bool
+}
+
+func (opts upOptions) apply(project *types.Project, services []string) error {
+	if opts.noDeps {
+		enabled, err := project.GetServices(services...)
+		if err != nil {
+			return err
+		}
+		for _, s := range project.Services {
+			if !utils.StringContains(services, s.Name) {
+				project.DisabledServices = append(project.DisabledServices, s)
+			}
+		}
+		project.Services = enabled
+	}
+
+	if opts.exitCodeFrom != "" {
+		_, err := project.GetService(opts.exitCodeFrom)
+		if err != nil {
+			return err
+		}
+	}
+
+	for _, scale := range opts.scale {
+		split := strings.Split(scale, "=")
+		if len(split) != 2 {
+			return fmt.Errorf("invalid --scale option %q. Should be SERVICE=NUM", scale)
+		}
+		name := split[0]
+		replicas, err := strconv.Atoi(split[1])
+		if err != nil {
+			return err
+		}
+		err = setServiceScale(project, name, uint64(replicas))
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 var configsCmd = &cobra.Command{
@@ -86,17 +151,62 @@ func up() {
 		Debug("Loaded Config:", config)
 
 		// make a project from the settings - the empty map is to avoid a nil pointer
-		project, err := cli.ProjectFromOptions(&cli.ProjectOptions{Name: config.Name, ConfigPaths: []string{filepath.Join(path, config.File)}, Environment: map[string]string{}})
+		project, err := cl.ProjectFromOptions(&cl.ProjectOptions{Name: config.Name, ConfigPaths: []string{filepath.Join(path, config.File)}, Environment: map[string]string{}})
 		CheckErr(err, "Could not create compose project '"+config.Name+"' stored in", "'"+filepath.Join(path, config.File)+"'")
 		Debug("Project:", project)
 
-		_, err = client.NewClientWithOpts(client.WithHost(dockerAddr))
-		CheckErr(err, "Could not create docker client")
-		fmt.Println("Created docker client")
+		Warn(project.Services)
+
+		runUp(context.TODO(), compose.NewComposeService(dockerCli), upOptions, project, nil)
 
 		// TODO: start the project
 		return nil
 	}))
+}
+
+func runUp(ctx context.Context, backend api.Service, upOptions upOptions, project *types.Project, services []string) error {
+	if len(project.Services) == 0 {
+		return fmt.Errorf("no service selected")
+	}
+
+	var consumer api.LogConsumer
+	if !upOptions.Detach {
+		consumer = formatter.NewLogConsumer(ctx, os.Stdout, !upOptions.noColor, !upOptions.noPrefix)
+	}
+
+	attachTo := services
+	if len(upOptions.attach) > 0 {
+		attachTo = upOptions.attach
+	}
+	if upOptions.attachDependencies {
+		attachTo = project.ServiceNames()
+	}
+
+	create := api.CreateOptions{
+		Services:             services,
+		RemoveOrphans:        false,
+		IgnoreOrphans:        false,
+		Recreate:             api.RecreateDiverged,
+		RecreateDependencies: api.RecreateDiverged,
+		Inherit:              true,
+		QuietPull:            false,
+	}
+
+	if upOptions.noStart {
+		return backend.Create(ctx, project, create)
+	}
+
+	return backend.Up(ctx, project, api.UpOptions{
+		Create: create,
+		Start: api.StartOptions{
+			Project:      project,
+			Attach:       consumer,
+			AttachTo:     attachTo,
+			ExitCodeFrom: upOptions.exitCodeFrom,
+			CascadeStop:  upOptions.cascadeStop,
+			Wait:         upOptions.wait,
+		},
+	})
 }
 
 func checkForComposeFiles(home string) (bool, string) {
