@@ -4,7 +4,7 @@ go 1.18
 
 require (
 	github.com/compose-spec/compose-go v1.2.4
-	github.com/docker/docker v20.10.15+incompatible
+	github.com/docker/docker v20.10.24+incompatible
 	github.com/jwalton/gchalk v1.3.0
 	github.com/manifoldco/promptui v0.9.0
 	github.com/spf13/cobra v1.4.0
